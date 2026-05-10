@@ -1,0 +1,21 @@
+# Environment — contains local paths and model config
+.env
+
+# Virtual environment
+.venv/
+
+# Vector database — built locally from your notes, not portable
+chroma_db/
+
+# Claude Code project files
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+
+# Logs
+*.log
+nohup.out
