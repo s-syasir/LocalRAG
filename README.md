@@ -38,11 +38,18 @@ Everything runs locally. Your notes never leave your machine.
 
 ### 1. Clone and create a virtual environment
 
+The venv is created outside the project directory to avoid issues with `noexec` mounted filesystems (e.g. NTFS/exFAT drives on Linux).
+
 ```bash
 git clone <repo-url>
 cd LocalRAG
-python -m venv .venv
-source .venv/bin/activate
+python3 -m venv ~/.venvs/localrag
+source ~/.venvs/localrag/bin/activate
+```
+
+You can use a different path by setting `VENV_PATH` before running `start.sh`:
+```bash
+VENV_PATH=/path/to/venv bash start.sh
 ```
 
 ### 2. Install dependencies
@@ -93,6 +100,8 @@ docker exec ollama ollama pull qwen2.5:14b
 bash start.sh
 ```
 
+> **Note:** Use `bash start.sh` rather than `./start.sh` if your project lives on a `noexec` mounted filesystem (e.g. NTFS/exFAT on Linux).
+
 This will:
 - Start the Ollama Docker container if not running
 - Pull the model if not already present
@@ -108,7 +117,7 @@ bash stop.sh
 ### Manual usage
 
 ```bash
-source .venv/bin/activate
+source ~/.venvs/localrag/bin/activate
 
 # Index your notes (run again whenever you add/update notes)
 python ingest.py

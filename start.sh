@@ -3,22 +3,12 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL="qwen2.5:14b"
+VENV="${VENV_PATH:-$HOME/.venvs/localrag}"
 
 echo "==> Checking Ollama container..."
 if ! docker ps --filter name=ollama --filter status=running --format '{{.Names}}' | grep -q '^ollama$'; then
-    if docker ps -a --filter name=ollama --format '{{.Names}}' | grep -q '^ollama$'; then
-        echo "    Starting existing ollama container..."
-        sudo docker start ollama
-    else
-        echo "    Creating ollama container..."
-        sudo docker run -d \
-            -v ollama_data:/root/.ollama \
-            --device /dev/kfd \
-            --device /dev/dri \
-            -p 11434:11434 \
-            --name ollama \
-            ollama/ollama:rocm
-    fi
+    echo "    Starting Ollama..."
+    bash -ic "startOllama"
     echo "    Waiting for Ollama to be ready..."
     sleep 5
 else
@@ -35,7 +25,7 @@ fi
 
 echo "==> Ingesting Joplin notes..."
 cd "$SCRIPT_DIR"
-source .venv/bin/activate
+source "$VENV/bin/activate"
 python ingest.py
 
 echo "==> Starting app..."

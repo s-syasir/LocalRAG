@@ -9,8 +9,7 @@ fi
 
 echo "==> Stopping Ollama container..."
 if docker ps --filter name=ollama --filter status=running --format '{{.Names}}' | grep -q '^ollama$'; then
-    sudo docker stop ollama
-    echo "    Ollama stopped."
+    bash -ic "stopOllama"
 else
     echo "    Ollama was not running."
 fi
