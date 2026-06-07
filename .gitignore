@@ -16,6 +16,10 @@ __pycache__/
 *.pyo
 *.egg-info/
 
+# Internal notes — not for public repo
+TODOS.md
+Docs.MD
+
 # Logs
 *.log
 nohup.out
