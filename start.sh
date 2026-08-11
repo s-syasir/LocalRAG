@@ -2,8 +2,14 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODEL="qwen2.5:14b"
 VENV="${VENV_PATH:-$HOME/.venvs/localrag}"
+
+# Read the model from .env rather than hardcoding it here: a second copy of the name
+# silently drifts, and the failure is this script pulling one model while app.py asks
+# Ollama for another.
+cd "$SCRIPT_DIR"
+[ -f .env ] && { set -a; . ./.env; set +a; }
+MODEL="${OLLAMA_MODEL:-qwen2.5:7b-instruct}"
 
 echo "==> Checking Ollama container..."
 if ! docker ps --filter name=ollama --filter status=running --format '{{.Names}}' | grep -q '^ollama$'; then
@@ -24,7 +30,6 @@ else
 fi
 
 echo "==> Ingesting Joplin notes..."
-cd "$SCRIPT_DIR"
 source "$VENV/bin/activate"
 python ingest.py
 

@@ -35,9 +35,10 @@ Everything runs locally. Your notes never leave your machine.
 ## Requirements
 
 - Python 3.10+
-- [Ollama](https://ollama.com) running locally (or via Docker)
-- Joplin desktop app with at least one note
-- AMD GPU with ROCm **or** Nvidia GPU with CUDA **or** CPU (slower)
+- [Ollama](https://ollama.com) running locally (or via Docker, or on another host on your LAN)
+- Joplin with at least one note — the desktop app, or the CLI/AppImage running headless on a
+  server (see [Headless deployment](#headless-deployment))
+- AMD GPU with ROCm **or** Nvidia GPU with CUDA **or** Intel Arc **or** CPU (slower)
 
 ## Setup
 
@@ -135,6 +136,99 @@ python app.py
 
 Then open [http://localhost:7860](http://localhost:7860).
 
+## Headless deployment
+
+Running this on a server instead of a desktop, so it is always available rather than only when
+a machine is logged in. Everything below is the same code — only the surrounding plumbing differs.
+
+### Get the notes onto the server
+
+The app reads Joplin's SQLite database directly, so the database has to be *on* the server.
+**Install a Joplin client there and let it sync** rather than copying the database over on a
+schedule from a machine that has one. A client is self-healing, arrives with the notes already
+decrypted, and is the same mechanism every other device uses; a copied database is a snapshot
+that silently rots when the copy job breaks.
+
+Either the [Joplin CLI](https://joplinapp.org/help/apps/terminal) or the desktop AppImage under
+`xvfb-run` works. If you sync against **Joplin Server**, note that it validates the request
+origin against its configured `APP_BASE_URL` and rejects anything else:
+
+```
+Error 404 Not Found: Invalid origin: http://joplin.internal.example
+```
+
+This is worth recognising because it does not look like what it is: authentication **succeeds**,
+and only the follow-up API calls fail. The visible symptom is a partial sync where notes appear
+but master keys never do, and the log says:
+
+```
+DecryptionWorker: cannot start because no master key is currently loaded
+```
+
+which reads as a credentials problem. It is not — the credentials are fine, the URL is wrong.
+Point the client at the exact `APP_BASE_URL` hostname. If that name does not resolve on the
+server's network, map it in `/etc/hosts` rather than changing the URL, so the name matches while
+the route stays local. On a cloud-init managed host, also disable `manage_etc_hosts` or that entry
+is rewritten away on the next boot.
+
+Seed the profile from an existing client rather than copying the whole profile directory —
+duplicating a profile duplicates its client ID and confuses sync. Copy `settings.json`, then set
+the sync password and `encryption.masterPassword` in the new profile's settings. Headless has no
+keychain, so these live in the profile.
+
+Set `clipperServer.autoStart: false` unless something else needs Joplin's Data API. LocalRAG reads
+the database file directly and never touches it.
+
+### Run it as a service
+
+```bash
+bash startHeadless.sh
+```
+
+`startHeadless.sh` is the server counterpart to `start.sh`. It reads the model name from `.env`
+instead of hardcoding one, reaches Ollama over HTTP rather than `docker exec` (so Ollama can be a
+container, a bare service, or on another host), and hands the app to systemd instead of `nohup`
+so it survives logout and reboot.
+
+A user unit, which needs `loginctl enable-linger <user>` to start at boot without a login:
+
+```ini
+# ~/.config/systemd/user/localrag.service
+[Unit]
+Description=LocalRAG - Gradio UI over Joplin notes
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/LocalRAG
+ExecStart=%h/.venvs/localrag/bin/python %h/LocalRAG/app.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target
+```
+
+### Re-index on a schedule
+
+On a desktop you re-run `ingest.py` when you notice stale answers. On a server nobody notices:
+the Joplin client keeps syncing, so the database stays current while **the vector index only
+changes when `ingest.py` runs**. The app keeps answering from whenever it was last indexed,
+confidently and with no error. A nightly cron entry is the whole fix:
+
+```cron
+0 5 * * * /path/to/LocalRAG/startHeadless.sh >> /var/log/localrag-ingest.log 2>&1
+```
+
+Have it refuse to index an empty database, so a broken sync cannot replace a good index with
+nothing. And restart the app afterwards — the Chroma collection is opened once at import, so a
+re-index is invisible to an already-running process. `startHeadless.sh` does both.
+
+### Exposing it
+
+`app.py` binds `0.0.0.0:7860` and has **no authentication of any kind**. Anyone who can reach
+that port can read every note you have indexed. Put it behind a reverse proxy that handles auth,
+and firewall the port so only the proxy can reach it directly.
+
 ## Agent mode
 
 `agent.py` upgrades the one-shot pipeline into a tool-calling agent. Instead of the app deciding retrieval for the model, the model is handed tools and drives the loop itself:
@@ -176,15 +270,19 @@ Agent-specific settings (all optional, sensible defaults):
 
 ## Re-indexing notes
 
-Run `ingest.py` (or `start.sh`) whenever you add or significantly update notes in Joplin. The index is fully rebuilt each time.
+Run `ingest.py` (or `start.sh`) whenever you add or significantly update notes in Joplin. The index is fully rebuilt each time. On a server, do it [on a schedule](#re-index-on-a-schedule) instead.
 
 ## Model recommendations
 
 | VRAM (or CPU) | Recommended model |
 |---|---|
-| CPU / 4–8 GB | `qwen2.5:7b-instruct` ← default, `llama3.1:8b` |
+| 4–6 GB | `qwen3.5:4b` — fits where a 7B will not, at the cost of noticeably slower generation once five note chunks of context are in the prompt |
+| CPU / 6–8 GB | `qwen2.5:7b-instruct` ← default, `llama3.1:8b` |
 | 8–16 GB | `qwen2.5:14b` |
 | 24 GB+ | `qwen2.5:32b` |
+
+Small-GPU headless boxes are the case the 4B row exists for: a 6 GB card has roughly 5 GB usable
+once the desktop and other workloads are accounted for, which a 7B will not fit into.
 
 For the agent, prefer instruct/tool-tuned models (`qwen2.5:7b-instruct`, `llama3.1:8b`) — they emit tool calls far more reliably than base models, and the multi-call loop makes anything much larger than ~8B slow on CPU.
 
@@ -198,7 +296,8 @@ LocalRAG/
 ├── agent_app.py    # Agent web UI with live tool-call trace (port 7861)
 ├── requirements.txt
 ├── setup.sh        # One-time AMD/ROCm setup
-├── start.sh        # Start everything
+├── start.sh        # Start everything (desktop: Ollama container + nohup)
+├── startHeadless.sh # Start everything (server: systemd + HTTP-reached Ollama)
 ├── stop.sh         # Stop everything
 ├── .env.example    # Config template
 └── chroma_db/      # Vector index (generated, not in repo)
