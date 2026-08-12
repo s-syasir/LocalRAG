@@ -4,25 +4,31 @@
 # User units rather than system units: everything runs as your user, out of your home
 # directory and your venv, and needs no root beyond enabling linger.
 #
-#   bash installService.sh              # both the Gradio UI and the API
-#   bash installService.sh --api-only   # just the OpenAI-compatible API
-#   bash installService.sh --app-only   # just the Gradio UI
+# By default ONLY the API is installed. The Gradio UI has no authentication, so running it
+# as a boot service exposes every indexed note to anyone who can reach the port. Serve the
+# API and put a client with real accounts in front of it; launch the UI on demand with
+# startApp.sh when you actually want it.
+#
+#   bash installService.sh              # the OpenAI-compatible API (default)
+#   bash installService.sh --with-app   # also install the Gradio UI as a boot service
+#   bash installService.sh --app-only   # only the Gradio UI
 #   bash installService.sh --uninstall  # stop, disable and remove both units
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="${VENV_PATH:-$HOME/.venvs/localrag}"
 UNIT_DIR="$HOME/.config/systemd/user"
-WANT_APP=1
+WANT_APP=0   # opt-in: see the note above about the UI having no auth
 WANT_API=1
 UNINSTALL=0
 
 for arg in "$@"; do
     case "$arg" in
         --api-only)  WANT_APP=0 ;;
-        --app-only)  WANT_API=0 ;;
+        --with-app)  WANT_APP=1 ;;
+        --app-only)  WANT_APP=1; WANT_API=0 ;;
         --uninstall) UNINSTALL=1 ;;
-        -h|--help)   sed -n '2,10p' "$0"; exit 0 ;;
+        -h|--help)   sed -n '2,15p' "$0"; exit 0 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -84,8 +90,8 @@ EOF
 }
 
 echo "==> Writing units (repo=$SCRIPT_DIR, venv=$VENV)"
-[ "$WANT_APP" = 1 ] && write_unit localrag.service     "LocalRAG - Gradio UI over Joplin notes" app.py
-[ "$WANT_API" = 1 ] && write_unit localrag-api.service "LocalRAG - OpenAI-compatible API"       openai_api.py
+if [ "$WANT_APP" = 1 ]; then write_unit localrag.service     "LocalRAG - Gradio UI over Joplin notes" app.py; fi
+if [ "$WANT_API" = 1 ]; then write_unit localrag-api.service "LocalRAG - OpenAI-compatible API"       openai_api.py; fi
 
 # Without linger, user units start at LOGIN, not at boot -- so a headless box comes back
 # from a reboot with nothing running and no error to explain why.
@@ -103,12 +109,18 @@ fi
 
 echo "==> Enabling and starting"
 systemctl --user daemon-reload
-[ "$WANT_APP" = 1 ] && systemctl --user enable --now localrag.service
-[ "$WANT_API" = 1 ] && systemctl --user enable --now localrag-api.service
+if [ "$WANT_APP" = 1 ]; then systemctl --user enable --now localrag.service; fi
+if [ "$WANT_API" = 1 ]; then systemctl --user enable --now localrag-api.service; fi
 
 echo
-[ "$WANT_APP" = 1 ] && systemctl --user --no-pager --lines=0 status localrag.service     || true
-[ "$WANT_API" = 1 ] && systemctl --user --no-pager --lines=0 status localrag-api.service || true
+if [ "$WANT_APP" = 1 ]; then systemctl --user --no-pager --lines=0 status localrag.service     || true; fi
+if [ "$WANT_API" = 1 ]; then systemctl --user --no-pager --lines=0 status localrag-api.service || true; fi
+
+if [ "$WANT_APP" = 1 ]; then
+    echo
+    echo "!! localrag.service (Gradio UI) has NO authentication and is now enabled at boot."
+    echo "   Firewall its port, or use --api-only and launch the UI with startApp.sh instead."
+fi
 
 cat <<EOF
 
@@ -118,5 +130,8 @@ Done. Useful commands:
   journalctl --user -u localrag-api.service -f
 
 The index is only rebuilt when ingest.py runs -- see "Re-index on a schedule" in the README.
-Both services load the index at startup, so restart them after a re-index.
+Services load the index at startup, so restart them after a re-index (startHeadless.sh does).
+
+The Gradio UI is not a boot service by default. Launch it when you want it:
+  bash startApp.sh          /  bash startApp.sh --stop
 EOF

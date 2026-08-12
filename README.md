@@ -190,14 +190,26 @@ instead of hardcoding one, reaches Ollama over HTTP rather than `docker exec` (s
 container, a bare service, or on another host), and hands the app to systemd instead of `nohup`
 so it survives logout and reboot.
 
-To install both services (the Gradio UI and the [API](#openai-compatible-api)), enable linger and
-start them:
+```bash
+bash installService.sh              # the API only (default)
+bash installService.sh --with-app   # also run the Gradio UI as a boot service
+bash installService.sh --uninstall  # remove the units again
+```
+
+**Only the API is installed by default, on purpose.** The Gradio UI has no authentication, so
+running it as a boot service leaves every indexed note readable by anyone who can reach the port.
+Serve the API, put a client with real accounts in front of it, and launch the UI on demand:
 
 ```bash
-bash installService.sh              # both
-bash installService.sh --api-only   # just the API
-bash installService.sh --uninstall  # remove them again
+bash startApp.sh            # start it
+bash startApp.sh --status   # is it up?
+bash startApp.sh --stop     # stop it again
 ```
+
+`startApp.sh` starts the systemd unit when one exists, even a disabled one, so the UI still gets
+journal logs and crash restarts without being enabled at boot. Failing that it runs the app
+directly. Either way a reverse-proxy route to the UI keeps working while it is up, and returns an
+error the rest of the time.
 
 It backs up any existing unit to `.bak` before overwriting, and orders after
 `joplin-headless.service` if such a unit exists. The units it writes look like this:
@@ -250,7 +262,8 @@ and firewall the port so only the proxy can reach it directly.
 
 The better answer for a shared server is to skip the Gradio UI and serve the
 [OpenAI-compatible API](#openai-compatible-api) instead, letting a real chat client handle
-accounts and login.
+accounts and login. That is why `installService.sh` installs only the API by default and the UI
+is launched on demand with `startApp.sh`.
 
 ## Agent mode
 
@@ -404,6 +417,7 @@ LocalRAG/
 ├── requirements.txt
 ├── setup.sh        # One-time AMD/ROCm setup
 ├── installService.sh # Install/remove the systemd user services
+├── startApp.sh     # Launch/stop the Gradio UI on demand (not a boot service)
 ├── start.sh        # Start everything (desktop: Ollama container + nohup)
 ├── startHeadless.sh # Start everything (server: systemd + HTTP-reached Ollama)
 ├── stop.sh         # Stop everything

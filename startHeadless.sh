@@ -48,12 +48,23 @@ echo "==> Indexing notes..."
 # process that is already running. Restarting is what makes new notes reachable.
 restarted=0
 for unit in $UNITS; do
-    if [ -n "$(systemctl --user list-unit-files --no-legend "$unit" 2>/dev/null)" ]; then
+    [ -n "$(systemctl --user list-unit-files --no-legend "$unit" 2>/dev/null)" ] || continue
+
+    # `systemctl restart` STARTS a stopped unit. A disabled unit is one somebody switched
+    # off on purpose -- the Gradio UI has no auth, so it is normal to keep it off and launch
+    # it by hand -- and a re-index must not quietly turn it back on. Refresh what is running,
+    # start what is supposed to be running, leave the rest alone.
+    if systemctl --user is-active --quiet "$unit"; then
         echo "==> Restarting $unit"
-        systemctl --user restart "$unit"
-        systemctl --user --no-pager --lines=0 status "$unit" || true
-        restarted=$((restarted + 1))
+    elif systemctl --user is-enabled --quiet "$unit" 2>/dev/null; then
+        echo "==> Starting $unit (enabled but not running)"
+    else
+        echo "==> Skipping $unit (disabled and not running)"
+        continue
     fi
+    systemctl --user restart "$unit"
+    systemctl --user --no-pager --lines=0 status "$unit" || true
+    restarted=$((restarted + 1))
 done
 
 if [ "$restarted" -eq 0 ]; then
