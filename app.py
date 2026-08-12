@@ -7,52 +7,9 @@ Usage:
     Then open http://localhost:7860
 """
 
-import os
-
-import chromadb
 import gradio as gr
-import ollama
-from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
 
-load_dotenv(override=True)
-
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
-CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
-TOP_K = int(os.getenv("TOP_K", "5"))
-
-print(f"Loading embedding model: {EMBED_MODEL}")
-embedder = SentenceTransformer(EMBED_MODEL)
-
-print(f"Connecting to vector DB: {CHROMA_PATH}")
-db = chromadb.PersistentClient(path=CHROMA_PATH)
-collection = db.get_collection("joplin_notes")
-
-ollama_client = ollama.Client(host=OLLAMA_BASE_URL)
-
-SYSTEM_PROMPT = (
-    "You are a helpful assistant with access to the user's personal Joplin notes. "
-    "Answer questions based on the provided note excerpts. "
-    "If the notes don't contain enough information to answer, say so clearly. "
-    "Always cite which note the information came from when relevant."
-)
-
-
-def retrieve(query: str) -> tuple[str, list[str]]:
-    embedding = embedder.encode([query])[0].tolist()
-    results = collection.query(
-        query_embeddings=[embedding],
-        n_results=TOP_K,
-        include=["documents", "metadatas"],
-    )
-    docs = results["documents"][0]
-    sources = [m["note"] for m in results["metadatas"][0]]
-    context = "\n\n---\n\n".join(
-        f"[From: {src}]\n{doc}" for doc, src in zip(docs, sources)
-    )
-    return context, list(dict.fromkeys(sources))  # deduplicated source list
+from rag import OLLAMA_MODEL, SYSTEM_PROMPT, chat_llm, collection, retrieve
 
 
 def chat(message: str, history: list[dict]):
@@ -73,7 +30,7 @@ def chat(message: str, history: list[dict]):
     response = ""
     source_footer = f"\n\n*Sources: {', '.join(sources)}*" if sources else ""
 
-    for chunk in ollama_client.chat(model=OLLAMA_MODEL, messages=messages, stream=True):
+    for chunk in chat_llm(OLLAMA_MODEL, messages, stream=True):
         delta = chunk.message.content or ""
         response += delta
         yield response

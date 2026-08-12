@@ -20,22 +20,11 @@ import json
 import os
 import sqlite3
 import sys
-from pathlib import Path
 
-import chromadb
-import ollama
-from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
+from rag import JOPLIN_DB, TOP_K, chat_llm, collection, embedder
 
-load_dotenv(override=True)
-
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 # dedicated var so the agent uses a tool-capable model without touching app.py's OLLAMA_MODEL
 AGENT_MODEL = os.getenv("AGENT_MODEL", "qwen2.5:7b-instruct")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
-CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
-JOPLIN_DB = Path(os.getenv("JOPLIN_DB_PATH", "~/.config/joplin-desktop/database.sqlite")).expanduser()
-TOP_K = int(os.getenv("TOP_K", "5"))
 MAX_STEPS = int(os.getenv("MAX_STEPS", "6"))
 # greedy decoding: a diagnosis tool must be deterministic, not sample a different
 # (sometimes self-contradictory) answer each run
@@ -56,12 +45,6 @@ def trace(msg: str) -> None:
     if TRACE:
         print(f"{DIM}{msg}{RESET}", file=sys.stderr)
 
-
-# --- shared resources -------------------------------------------------------
-
-embedder = SentenceTransformer(EMBED_MODEL)
-collection = chromadb.PersistentClient(path=CHROMA_PATH).get_collection("joplin_notes")
-client = ollama.Client(host=OLLAMA_BASE_URL)
 
 # titles cited by tools this turn, for a grounded Sources footer
 _cited: set[str] = set()
@@ -228,7 +211,7 @@ def run_stream(question: str):
     ]
 
     for step in range(1, MAX_STEPS + 1):
-        resp = client.chat(model=AGENT_MODEL, messages=messages, tools=TOOL_SPECS, options=GEN_OPTS)
+        resp = chat_llm(AGENT_MODEL, messages, tools=TOOL_SPECS, options=GEN_OPTS)
         msg = resp.message
         messages.append(msg)
 
@@ -260,7 +243,7 @@ def run_stream(question: str):
         "content": "Stop searching. Answer now using only what you gathered, naming the "
                    f"exact note titles you used. If it's not enough, reply exactly: '{REFUSE}'",
     })
-    final = client.chat(model=AGENT_MODEL, messages=messages, options=GEN_OPTS)
+    final = chat_llm(AGENT_MODEL, messages, options=GEN_OPTS)
     yield ("answer", _finalize(final.message.content or ""))
 
 

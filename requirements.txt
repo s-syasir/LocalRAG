@@ -7,3 +7,7 @@ chromadb>=0.5.0
 ollama>=0.3.0
 gradio>=4.40.0
 python-dotenv>=1.0.0
+
+# openai_api.py only
+fastapi>=0.110.0
+uvicorn>=0.29.0

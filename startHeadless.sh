@@ -13,7 +13,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="${VENV_PATH:-$HOME/.venvs/localrag}"
-UNIT="${LOCALRAG_UNIT:-localrag.service}"
+# Every service that holds the index open. Both app.py and openai_api.py load the Chroma
+# collection at import, so a re-index is invisible to whichever one is not restarted --
+# it keeps answering from the old index, with no error to show for it.
+UNITS="${LOCALRAG_UNITS:-${LOCALRAG_UNIT:-localrag.service localrag-api.service}}"
 
 cd "$SCRIPT_DIR"
 [ -f .env ] || { echo "!! no .env -- copy .env.example and edit it"; exit 1; }
@@ -43,13 +46,19 @@ echo "==> Indexing notes..."
 
 # The Chroma collection is opened once at import, so a re-index is invisible to a
 # process that is already running. Restarting is what makes new notes reachable.
-if systemctl --user list-unit-files "$UNIT" >/dev/null 2>&1 && \
-   [ -n "$(systemctl --user list-unit-files --no-legend "$UNIT" 2>/dev/null)" ]; then
-    echo "==> Restarting $UNIT"
-    systemctl --user restart "$UNIT"
-    systemctl --user --no-pager --lines=0 status "$UNIT" || true
-else
-    echo "!! $UNIT not installed -- see the headless deployment section of the README."
+restarted=0
+for unit in $UNITS; do
+    if [ -n "$(systemctl --user list-unit-files --no-legend "$unit" 2>/dev/null)" ]; then
+        echo "==> Restarting $unit"
+        systemctl --user restart "$unit"
+        systemctl --user --no-pager --lines=0 status "$unit" || true
+        restarted=$((restarted + 1))
+    fi
+done
+
+if [ "$restarted" -eq 0 ]; then
+    echo "!! none of these units are installed: $UNITS"
+    echo "   Run installService.sh, or see the headless deployment section of the README."
     echo "   Falling back to a foreground run; Ctrl-C stops it."
     exec "$VENV/bin/python" app.py
 fi
